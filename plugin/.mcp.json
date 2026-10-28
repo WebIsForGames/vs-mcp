@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "vs-debug": {
+      "command": "${CLAUDE_PLUGIN_ROOT}/server/VsDebugMcp.exe",
+      "args": []
+    }
+  }
+}

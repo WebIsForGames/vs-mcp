@@ -1,0 +1,6 @@
+bin/
+obj/
+.vs/
+*.user
+plugin/server/
+samples/**/x64/

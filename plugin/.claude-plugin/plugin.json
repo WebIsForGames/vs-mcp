@@ -1,0 +1,8 @@
+{
+  "name": "vs-cpp-debug",
+  "version": "0.1.0",
+  "description": "Debug C++ in Visual Studio 2022/2026: breakpoints, waiting for a break, continuing.",
+  "author": {
+    "name": "CrazyCoderX3"
+  }
+}

@@ -1,0 +1,17 @@
+{
+  "name": "vs-mcp",
+  "owner": {
+    "name": "CrazyCoderX3"
+  },
+  "metadata": {
+    "description": "Claude Code plugins for working with Visual Studio."
+  },
+  "plugins": [
+    {
+      "name": "vs-cpp-debug",
+      "source": "./plugin",
+      "description": "Debug C++ in Visual Studio 2022/2026: breakpoints, waiting for a break, continuing.",
+      "version": "0.1.0"
+    }
+  ]
+}
