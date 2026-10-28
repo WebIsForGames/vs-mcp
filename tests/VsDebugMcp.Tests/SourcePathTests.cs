@@ -11,6 +11,15 @@ public class SourcePathTests
     [InlineData("")]
     public void RejectsPathsThatAreNotAbsolute(string file) => Assert.Throws<McpException>(() => SourcePath.Normalize(file));
 
+    [Theory]
+    [InlineData(@"\\server\share\main.cpp")]
+    [InlineData("//server/share/main.cpp")]
+    [InlineData(@"\\?\UNC\server\share\main.cpp")]
+    [InlineData(@"\\?\C:\src\main.cpp")]
+    [InlineData(@"\\.\pipe\name")]
+    public void RejectsNetworkAndDevicePaths(string file) =>
+        Assert.Contains("Network and device paths", Assert.Throws<McpException>(() => SourcePath.Normalize(file)).Message);
+
     [Fact]
     public void NormalizesSeparatorsAndDots() => Assert.Equal(@"C:\src\main.cpp", SourcePath.Normalize("C:/src/./lib/../main.cpp"));
 

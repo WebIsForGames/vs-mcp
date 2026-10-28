@@ -11,7 +11,16 @@ public static class SourcePath
             throw new McpException($"File path must be absolute, got '{file}'.");
         }
 
-        return Path.GetFullPath(file);
+        var path = Path.GetFullPath(file);
+
+        // A file check on a UNC path connects to that server and may send it Windows credentials.
+        // Device paths (\\?\UNC\..., \\.\...) reach the same places, so only drive paths are accepted.
+        if (path.StartsWith(@"\\", StringComparison.Ordinal))
+        {
+            throw new McpException($"Network and device paths are not allowed, got '{file}'. Use a path on a local or mapped drive.");
+        }
+
+        return path;
     }
 
     public static bool Same(string? left, string? right) =>
