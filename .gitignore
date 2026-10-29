@@ -4,3 +4,4 @@ obj/
 *.user
 plugin/server/
 samples/**/x64/
+samples/**/Debug/

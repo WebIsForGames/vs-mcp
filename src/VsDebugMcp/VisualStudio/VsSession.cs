@@ -4,7 +4,7 @@ using VsDebugMcp.Com;
 
 namespace VsDebugMcp.VisualStudio;
 
-public sealed record VsInstance(VsMoniker Moniker, DTE Dte);
+public sealed record VsInstance(VsMoniker Moniker, DTE Dte, DebuggerMonitor Monitor);
 
 /// <summary>
 /// Finds Visual Studio instances, remembers the one the user selected and runs automation calls
@@ -12,8 +12,11 @@ public sealed record VsInstance(VsMoniker Moniker, DTE Dte);
 /// </summary>
 public sealed class VsSession(StaComDispatcher sta)
 {
+    private sealed record RunningInstance(VsMoniker Moniker, DTE Dte);
+
     // Accessed only on the STA thread.
     private int? _selectedProcessId;
+    private readonly Dictionary<int, DebuggerMonitor> _monitors = [];
 
     public Task<List<InstanceInfo>> ListAsync() => sta.InvokeAsync(() => FindAll().Select(Describe).ToList());
 
@@ -38,7 +41,25 @@ public sealed class VsSession(StaComDispatcher sta)
     {
         var instances = FindAll();
         var target = InstanceSelector.Select(instances.Select(i => i.Moniker).ToList(), _selectedProcessId);
-        return instances.First(i => i.Moniker == target);
+        var dte = instances.First(i => i.Moniker == target).Dte;
+        return new VsInstance(target, dte, Monitor(instances, target.ProcessId, dte));
+    }
+
+    // One monitor per Visual Studio process, so its transition counts carry over between tool calls.
+    private DebuggerMonitor Monitor(List<RunningInstance> running, int processId, DTE dte)
+    {
+        foreach (var closed in _monitors.Keys.Where(pid => running.All(i => i.Moniker.ProcessId != pid)).ToList())
+        {
+            _monitors.Remove(closed);
+        }
+
+        if (!_monitors.TryGetValue(processId, out var monitor))
+        {
+            monitor = new DebuggerMonitor(dte);
+            _monitors[processId] = monitor;
+        }
+
+        return monitor;
     }
 
     private static T Execute<T>(VsInstance instance, Func<VsInstance, T> action)
@@ -53,14 +74,14 @@ public sealed class VsSession(StaComDispatcher sta)
         }
     }
 
-    private static List<VsInstance> FindAll() =>
+    private static List<RunningInstance> FindAll() =>
         RunningObjectTable.GetObjects(VsMoniker.ParseSupported)
             .Where(entry => entry.Object is DTE)
-            .Select(entry => new VsInstance(entry.Key, (DTE)entry.Object))
+            .Select(entry => new RunningInstance(entry.Key, (DTE)entry.Object))
             .OrderBy(instance => instance.Moniker.ProcessId)
             .ToList();
 
-    private InstanceInfo Describe(VsInstance instance)
+    private InstanceInfo Describe(RunningInstance instance)
     {
         var moniker = instance.Moniker;
         var selected = moniker.ProcessId == _selectedProcessId;

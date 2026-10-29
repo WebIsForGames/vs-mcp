@@ -26,9 +26,10 @@ public sealed class ExecutionTools(DebuggerService debugger)
 
     [McpServerTool(Name = "vs_wait_for_break", ReadOnly = true)]
     [Description(
-        "Waits until the debugger stops (breakpoint, exception, step) or the program exits. Returns immediately if already stopped. " +
+        "Waits until the debugger stops (breakpoint, exception, __debugbreak, step) or the program exits. Returns immediately if already stopped. " +
         "Result mode: break (with breakReason, location and breakpoint), design (not debugging: the program exited) or " +
-        "run with timedOut = true (no stop yet; call again).")]
+        "run with timedOut = true (no stop yet; call again). Exception stops add exceptionMessage; stoppedIn is the frame " +
+        "without source the program stopped in, when location is its caller.")]
     public Task<DebuggerState> WaitForBreak(
         [Description("Seconds to wait, 1-300. Default 60.")] int timeoutSeconds = DebuggerService.DefaultWaitSeconds,
         CancellationToken cancellationToken = default) =>
@@ -36,7 +37,7 @@ public sealed class ExecutionTools(DebuggerService debugger)
 
     [McpServerTool(Name = "vs_get_state", ReadOnly = true)]
     [Description("Returns the current debugger mode (design, run, break) and, in break mode, the reason and source location.")]
-    public Task<DebuggerState> GetState() => debugger.GetStateAsync();
+    public Task<DebuggerState> GetState(CancellationToken cancellationToken = default) => debugger.GetStateAsync(cancellationToken);
 
     [McpServerTool(Name = "vs_stop_debugging", Destructive = true)]
     [Description("Stops debugging (like Shift+F5); a launched program is terminated.")]

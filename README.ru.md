@@ -61,11 +61,11 @@ claude mcp add --scope user vs-debug -- O:\Personal\Projects\vs-mcp\plugin\serve
 |---|---|
 | `vs_list_instances` | Запущенные VS 2022/2026: pid, версия, решение, режим отладчика |
 | `vs_select_instance` | Выбор экземпляра, когда их несколько. Если VS одна, она выбирается автоматически |
-| `vs_set_breakpoint` | Breakpoint по абсолютному пути и строке, с необязательным C++ условием |
-| `vs_remove_breakpoint` | Удаление breakpoint-а на строке |
+| `vs_set_breakpoint` | Breakpoint по абсолютному пути и строке или function breakpoint (`function`, например `_wassert` для сработавшего assert), с необязательным C++ условием |
+| `vs_remove_breakpoint` | Удаление breakpoint-а на строке или function breakpoint-а |
 | `vs_list_breakpoints` | Все breakpoint-ы, включая состояние привязки (`bindState`, `boundLines`) |
 | `vs_start_debugging` | Сборка и запуск отладки (F5). При ошибке сборки возвращает ошибки компилятора |
-| `vs_wait_for_break` | Ждёт остановку (до 300 с). Возвращает причину, файл, строку, функцию, или `timedOut`, или сообщает, что программа завершилась |
+| `vs_wait_for_break` | Ждёт остановку (до 300 с): breakpoint, исключение, `__debugbreak`. Возвращает причину, файл, строку, функцию, текст исключения, или `timedOut`, или сообщает, что программа завершилась |
 | `vs_continue` | Продолжение из режима break |
 | `vs_get_state` | Текущий режим и место остановки |
 | `vs_stop_debugging` | Остановка отладки (Shift+F5) |
@@ -74,7 +74,7 @@ claude mcp add --scope user vs-debug -- O:\Personal\Projects\vs-mcp\plugin\serve
 
 ## Как пользоваться
 
-Откройте решение в VS и попросите Claude, например: «Поставь breakpoint в начале Square в main.cpp, запусти и скажи, с какими значениями она вызывается». Порядок работы описан в skill [`vs-cpp-debug`](plugin/skills/vs-cpp-debug/SKILL.md).
+Откройте решение в VS и попросите Claude, например: «Поставь breakpoint в начале Square в main.cpp, запусти и скажи, с какими значениями она вызывается» или «Запусти программу и найди, где она падает». Порядок работы описан в skill [`vs-cpp-debug`](plugin/skills/vs-cpp-debug/SKILL.md).
 
 ## Проверочный проект
 
@@ -88,10 +88,14 @@ claude mcp add --scope user vs-debug -- O:\Personal\Projects\vs-mcp\plugin\serve
 - остановка отладки;
 - выбор между двумя запущенными экземплярами.
 
+`samples/ExceptionDemo` останавливает отладчик другими способами. Сценарий задаётся аргументом командной строки (свойства проекта, Debugging, Command Arguments): `null`, `null-handled`, `debugbreak`, `debugbreak-api`, `int3` (только платформа x86), `throw`, `throw-caught`, `assert`. Все они проверены в обеих версиях VS, результаты — в [плане](Plans/exceptions-debugbreak-assert.md).
+
 ## Ограничения
 
 - **Модальные диалоги VS блокируют автоматизацию.** Сервер сообщает «busy and rejected the call»; закройте диалог в VS.
 - **Сборка перед запуском.** С `build: false` устаревший проект вызовет в VS диалог «out of date».
+- **Сработавший `assert` не останавливает отладчик.** Вместо этого C runtime показывает диалог в программе; function breakpoint на `_wassert` останавливает до него.
+- **Текст исключения берётся из панели Debug окна Output** и зависит от языка интерфейса VS: других сведений о native-исключениях автоматизация не даёт.
 - **Что не входит в MVP:** просмотр переменных, вычисление выражений, call stack, шаги, attach к процессу.
 
 ## Безопасность
@@ -99,7 +103,7 @@ claude mcp add --scope user vs-debug -- O:\Personal\Projects\vs-mcp\plugin\serve
 - Сервер общается только с Claude Code через stdin/stdout и с локальной VS через COM. Сетевых портов он не открывает и сам в сеть не обращается.
 - Сетевые пути (`\\server\share\…`) и device-пути (`\\?\…`, `\\.\…`) сервер отклоняет до обращения к файлу: проверка файла на чужом сервере может отправить ему учётные данные Windows. Сетевые диски с буквой работают.
 - `vs_start_debugging` собирает и запускает startup-проект с вашими правами, а build events и MSBuild-задачи могут выполнять любые команды. Отлаживайте только доверенные решения, чужие проекты — в отдельной виртуальной машине. Не запускайте VS от администратора.
-- Результаты инструментов уходят в Claude: пути к решению и файлам, имена процесса, функций и модулей, условия breakpoint-ов, текст ошибок сборки. Не используйте сервер с кодом, который нельзя передавать вашему провайдеру модели.
+- Результаты инструментов уходят в Claude: пути к решению и файлам, имена процесса, функций и модулей, условия breakpoint-ов, текст ошибок сборки, тексты исключений. Не используйте сервер с кодом, который нельзя передавать вашему провайдеру модели.
 - Версии и хэши NuGet-пакетов закреплены lock-файлом, см. «Сборка».
 
 ## Структура
@@ -111,6 +115,7 @@ src/VsDebugMcp/          MCP-сервер (C#, .NET 10, ModelContextProtocol SDK
   Tools/                 MCP-инструменты
 tests/VsDebugMcp.Tests/  unit-тесты (без VS)
 samples/BreakpointDemo/  C++ проект для ручной проверки
+samples/ExceptionDemo/   C++ проект с исключениями, __debugbreak и assert
 plugin/                  плагин Claude Code: skill, .mcp.json, server/ после сборки
 Plans/                   планы
 ```

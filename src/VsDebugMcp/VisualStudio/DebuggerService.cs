@@ -17,34 +17,34 @@ public sealed class DebuggerService(VsSession session)
     private static readonly TimeSpan ContinueTimeout = TimeSpan.FromSeconds(5);
     private static readonly TimeSpan StopTimeout = TimeSpan.FromSeconds(15);
 
+    // Visual Studio writes the exception message to the Debug pane up to about 0.4 s after it breaks.
+    private static readonly TimeSpan ExceptionMessageTimeout = TimeSpan.FromSeconds(1);
+
     public static TimeSpan ClampWaitTimeout(int seconds) => TimeSpan.FromSeconds(Math.Clamp(seconds, 1, MaxWaitSeconds));
 
-    public Task<BreakpointInfo> SetBreakpointAsync(string file, int line, string? condition)
+    public Task<BreakpointInfo> SetBreakpointAsync(string? file, int? line, string? function, string? condition)
     {
-        var path = SourcePath.Normalize(file);
-        if (!File.Exists(path))
+        var target = BreakpointTarget.Create(file, line, function);
+        if (target.File is not null && !File.Exists(target.File))
         {
-            throw new McpException($"File not found: {path}");
-        }
-
-        if (line < 1)
-        {
-            throw new McpException($"Line must be 1 or greater, got {line}.");
+            throw new McpException($"File not found: {target.File}");
         }
 
         return session.RunAsync(vs =>
         {
             var debugger = vs.Dte.Debugger;
             var debugging = debugger.CurrentMode != dbgDebugMode.dbgDesignMode;
-            if (FindAt(debugger, path, line).FirstOrDefault() is { } existing)
+            if (Find(debugger, target).FirstOrDefault() is { } existing)
             {
                 return Describe(existing, debugging) with { AlreadyExisted = true };
             }
 
-            var added = debugger.Breakpoints.Add(File: path, Line: line, Condition: condition ?? "");
+            var added = target.Function is not null
+                ? debugger.Breakpoints.Add(Function: target.Function, Condition: condition ?? "")
+                : debugger.Breakpoints.Add(File: target.File, Line: target.Line.GetValueOrDefault(), Condition: condition ?? "");
             if (added.Count == 0)
             {
-                throw new McpException($"Visual Studio did not create a breakpoint at {path}:{line}.");
+                throw new McpException($"Visual Studio did not create a breakpoint at {target}.");
             }
 
             return Describe(added.Item(1), debugging);
@@ -58,17 +58,17 @@ public sealed class DebuggerService(VsSession session)
         return All(debugger).Select(breakpoint => Describe(breakpoint, debugging)).ToList();
     });
 
-    public Task<List<BreakpointInfo>> RemoveBreakpointAsync(string file, int line)
+    public Task<List<BreakpointInfo>> RemoveBreakpointAsync(string? file, int? line, string? function)
     {
-        var path = SourcePath.Normalize(file);
+        var target = BreakpointTarget.Create(file, line, function);
         return session.RunAsync(vs =>
         {
             var debugger = vs.Dte.Debugger;
             var debugging = debugger.CurrentMode != dbgDebugMode.dbgDesignMode;
-            var matches = FindAt(debugger, path, line).ToList();
+            var matches = Find(debugger, target).ToList();
             if (matches.Count == 0)
             {
-                throw new McpException($"No breakpoint at {path}:{line}. Call vs_list_breakpoints to see existing ones.");
+                throw new McpException($"No breakpoint at {target}. Call vs_list_breakpoints to see existing ones.");
             }
 
             var removed = matches.Select(breakpoint => Describe(breakpoint, debugging)).ToList();
@@ -80,7 +80,7 @@ public sealed class DebuggerService(VsSession session)
     public async Task<DebuggerState> StartAsync(bool build, CancellationToken cancellationToken)
     {
         var instance = await session.ResolveAsync();
-        await session.InvokeAsync(instance, vs =>
+        var runsBefore = await session.InvokeAsync(instance, vs =>
         {
             var dte = vs.Dte;
             var mode = dte.Debugger.CurrentMode;
@@ -111,20 +111,31 @@ public sealed class DebuggerService(VsSession session)
                 }
             }
 
+            var runs = vs.Monitor.Transitions.Runs;
+            vs.Monitor.MarkOutput();
             dte.Debugger.Go(WaitForBreakOrEnd: false);
-            return true;
+            return runs;
         });
 
-        var state = await PollAsync(instance, StartTimeout, TransitionPollInterval, s => s.Mode != DebuggerText.Design, cancellationToken);
-        return state.TimedOut == true
-            ? state with { Note = $"The debugger did not start within {StartTimeout.TotalSeconds:0} s. Check Visual Studio for a dialog such as 'Unable to start program'." }
-            : state;
+        // A program that exits before the first poll shows up only as a run transition.
+        var state = await PollAsync(
+            instance,
+            StartTimeout,
+            TransitionPollInterval,
+            (s, transitions) => s.Mode != DebuggerText.Design || transitions.Runs != runsBefore,
+            cancellationToken);
+        return state switch
+        {
+            { TimedOut: true } => state with { Note = $"The debugger did not start within {StartTimeout.TotalSeconds:0} s. Check Visual Studio for a dialog such as 'Unable to start program'." },
+            { Mode: DebuggerText.Design } => state with { Note = "The program started and exited without stopping." },
+            _ => state,
+        };
     }
 
     public async Task<DebuggerState> ContinueAsync(CancellationToken cancellationToken)
     {
         var instance = await session.ResolveAsync();
-        var before = await session.InvokeAsync(instance, vs =>
+        var (before, transitionsBefore) = await session.InvokeAsync(instance, vs =>
         {
             var debugger = vs.Dte.Debugger;
             var mode = debugger.CurrentMode;
@@ -135,14 +146,22 @@ public sealed class DebuggerService(VsSession session)
                     (mode == dbgDebugMode.dbgDesignMode ? " Use vs_start_debugging." : " Use vs_wait_for_break."));
             }
 
+            var transitions = vs.Monitor.Transitions;
             var state = DebuggerSnapshot.Capture(debugger);
+            vs.Monitor.MarkOutput();
             debugger.Go(WaitForBreakOrEnd: false);
-            return state;
+            return (state, transitions);
         });
 
         // Wait until Visual Studio leaves the break it was in, so a following vs_wait_for_break
-        // reports the next stop rather than this one. A quick re-hit shows up as a changed state.
-        var after = await PollAsync(instance, ContinueTimeout, TransitionPollInterval, s => s != before, cancellationToken);
+        // reports the next stop rather than this one. A quick re-hit shows up as a changed state or,
+        // when it looks the same (a __debugbreak in a loop), as a new run and break transition.
+        var after = await PollAsync(
+            instance,
+            ContinueTimeout,
+            TransitionPollInterval,
+            (s, transitions) => s != before || (transitions.Runs > transitionsBefore.Runs && transitions.Breaks > transitionsBefore.Breaks),
+            cancellationToken);
         return after switch
         {
             { TimedOut: true } => after with { Note = $"Visual Studio was still in the same break after {ContinueTimeout.TotalSeconds:0} s; check it for a dialog." },
@@ -155,7 +174,7 @@ public sealed class DebuggerService(VsSession session)
     {
         var timeout = ClampWaitTimeout(timeoutSeconds);
         var instance = await session.ResolveAsync();
-        var state = await PollAsync(instance, timeout, WaitPollInterval, s => s.Mode != DebuggerText.Run, cancellationToken);
+        var state = await PollAsync(instance, timeout, WaitPollInterval, (s, _) => s.Mode != DebuggerText.Run, cancellationToken);
         return state.Mode switch
         {
             DebuggerText.Design => state with { Note = "Not debugging: the program exited or debugging was never started." },
@@ -164,7 +183,12 @@ public sealed class DebuggerService(VsSession session)
         };
     }
 
-    public Task<DebuggerState> GetStateAsync() => session.RunAsync(vs => DebuggerSnapshot.Capture(vs.Dte.Debugger));
+    public async Task<DebuggerState> GetStateAsync(CancellationToken cancellationToken)
+    {
+        var instance = await session.ResolveAsync();
+        var state = await session.InvokeAsync(instance, vs => DebuggerSnapshot.Capture(vs.Dte.Debugger));
+        return await WithExceptionMessageAsync(instance, state, cancellationToken);
+    }
 
     public async Task<DebuggerState> StopAsync(CancellationToken cancellationToken)
     {
@@ -186,7 +210,7 @@ public sealed class DebuggerService(VsSession session)
             return before with { Note = "Not debugging; nothing to stop." };
         }
 
-        var after = await PollAsync(instance, StopTimeout, TransitionPollInterval, s => s.Mode == DebuggerText.Design, cancellationToken);
+        var after = await PollAsync(instance, StopTimeout, TransitionPollInterval, (s, _) => s.Mode == DebuggerText.Design, cancellationToken);
         return after.TimedOut == true
             ? after with { Note = $"The debugger did not stop within {StopTimeout.TotalSeconds:0} s." }
             : after;
@@ -196,25 +220,63 @@ public sealed class DebuggerService(VsSession session)
         VsInstance instance,
         TimeSpan timeout,
         TimeSpan interval,
-        Func<DebuggerState, bool> isDone,
+        Func<DebuggerState, (int Runs, int Breaks), bool> isDone,
+        CancellationToken cancellationToken)
+    {
+        // Transitions are read before the state, so one already counted is always reflected in that state.
+        var (polled, timedOut) = await PollUntilAsync(
+            instance,
+            vs => (Transitions: vs.Monitor.Transitions, State: DebuggerSnapshot.Capture(vs.Dte.Debugger)),
+            p => isDone(p.State, p.Transitions),
+            timeout,
+            interval,
+            cancellationToken);
+        return timedOut
+            ? polled.State with { TimedOut = true }
+            : await WithExceptionMessageAsync(instance, polled.State, cancellationToken);
+    }
+
+    private async Task<(T Value, bool TimedOut)> PollUntilAsync<T>(
+        VsInstance instance,
+        Func<VsInstance, T> read,
+        Func<T, bool> isDone,
+        TimeSpan timeout,
+        TimeSpan interval,
         CancellationToken cancellationToken)
     {
         var elapsed = System.Diagnostics.Stopwatch.StartNew();
         while (true)
         {
-            var state = await session.InvokeAsync(instance, vs => DebuggerSnapshot.Capture(vs.Dte.Debugger));
-            if (isDone(state))
+            var value = await session.InvokeAsync(instance, read);
+            if (isDone(value))
             {
-                return state;
+                return (value, false);
             }
 
             if (elapsed.Elapsed >= timeout)
             {
-                return state with { TimedOut = true };
+                return (value, true);
             }
 
             await Task.Delay(interval, cancellationToken);
         }
+    }
+
+    private async Task<DebuggerState> WithExceptionMessageAsync(VsInstance instance, DebuggerState state, CancellationToken cancellationToken)
+    {
+        if (state.BreakReason is not (DebuggerText.ExceptionThrown or DebuggerText.ExceptionNotHandled))
+        {
+            return state;
+        }
+
+        var (message, _) = await PollUntilAsync(
+            instance,
+            vs => DebuggerText.ExceptionMessage(vs.Monitor.ReadOutput()),
+            text => text is not null,
+            ExceptionMessageTimeout,
+            TransitionPollInterval,
+            cancellationToken);
+        return state with { ExceptionMessage = message };
     }
 
     private static IEnumerable<Breakpoint> Items(Breakpoints breakpoints)
@@ -227,18 +289,18 @@ public sealed class DebuggerService(VsSession session)
 
     private static IEnumerable<Breakpoint> All(Debugger debugger) => Items(debugger.Breakpoints);
 
-    private static IEnumerable<Breakpoint> FindAt(Debugger debugger, string path, int line) =>
-        All(debugger).Where(breakpoint => breakpoint.FileLine == line && SourcePath.Same(breakpoint.File, path));
+    private static IEnumerable<Breakpoint> Find(Debugger debugger, BreakpointTarget target) => All(debugger).Where(target.Matches);
 
     private static BreakpointInfo Describe(Breakpoint breakpoint, bool debugging)
     {
         // Bound children exist only while debugging; their hit counts are the ones that change.
         var bound = ComValue.Try(() => Items(breakpoint.Children).Select(child => (child.FileLine, child.CurrentHits)).ToList()) ?? [];
-        int[] boundLines = [.. bound.Select(child => child.FileLine).Distinct().Order()];
+        // Function breakpoints and their bound children in code without source have line 0.
+        int[] boundLines = [.. bound.Select(child => child.FileLine).Where(line => line > 0).Distinct().Order()];
         var bindState = !debugging ? "notDebugging" : bound.Count > 0 ? "bound" : "unbound";
         return new BreakpointInfo(
             ComValue.NullIfEmpty(breakpoint.File),
-            breakpoint.FileLine,
+            breakpoint.FileLine > 0 ? breakpoint.FileLine : null,
             ComValue.NullIfEmpty(ComValue.Try(() => breakpoint.FunctionName)),
             ComValue.NullIfEmpty(breakpoint.Condition),
             breakpoint.Enabled,

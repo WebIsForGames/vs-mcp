@@ -3,9 +3,12 @@ using EnvDTE90a;
 
 namespace VsDebugMcp.VisualStudio;
 
-/// <summary>Reads the debugger state. Call only on the STA thread.</summary>
-internal static class DebuggerSnapshot
+/// <summary>Reads the debugger state. Call <see cref="Capture"/> only on the STA thread.</summary>
+public static class DebuggerSnapshot
 {
+    // A stop without source deeper than this is reported without a source location.
+    private const int MaxSourceFrameDepth = 50;
+
     public static DebuggerState Capture(Debugger debugger)
     {
         var mode = debugger.CurrentMode;
@@ -16,17 +19,39 @@ internal static class DebuggerSnapshot
         }
 
         var reason = debugger.LastBreakReason;
+        var current = ComValue.Try(() => Location(debugger.CurrentStackFrame));
+        var location = ComValue.Try(() => SourceFrame(current, Stack(debugger))) ?? current;
         return new DebuggerState(
             DebuggerText.Break,
             DebuggerText.Reason(reason),
-            ComValue.Try(() => CurrentLocation(debugger)),
+            location,
             reason == dbgEventReason.dbgEventReasonBreakpoint ? ComValue.Try(() => LastHit(debugger)) : null,
-            process);
+            process,
+            StoppedIn: location == current ? null : current);
     }
 
-    private static SourceLocation? CurrentLocation(Debugger debugger)
+    /// <summary>
+    /// The current frame if it has source, otherwise the nearest frame on the stack that does, e.g. the caller
+    /// of a CRT function stopped on a function breakpoint. Visual Studio already does this for exceptions.
+    /// </summary>
+    public static SourceLocation? SourceFrame(SourceLocation? current, IEnumerable<SourceLocation> stack) =>
+        current?.File is not null ? current : stack.FirstOrDefault(frame => frame.File is not null) ?? current;
+
+    private static IEnumerable<SourceLocation> Stack(Debugger debugger)
     {
-        if (debugger.CurrentStackFrame is not StackFrame2 frame)
+        var frames = debugger.CurrentThread.StackFrames;
+        for (var i = 1; i <= Math.Min(frames.Count, MaxSourceFrameDepth); i++)
+        {
+            if (Location(frames.Item(i)) is { } frame)
+            {
+                yield return frame;
+            }
+        }
+    }
+
+    private static SourceLocation? Location(StackFrame? stackFrame)
+    {
+        if (stackFrame is not StackFrame2 frame)
         {
             return null;
         }
@@ -41,6 +66,10 @@ internal static class DebuggerSnapshot
 
     private static BreakpointHit? LastHit(Debugger debugger) =>
         debugger.BreakpointLastHit is { } breakpoint
-            ? new BreakpointHit(ComValue.NullIfEmpty(breakpoint.File), breakpoint.FileLine, breakpoint.CurrentHits)
+            ? new BreakpointHit(
+                ComValue.NullIfEmpty(breakpoint.File),
+                breakpoint.FileLine > 0 ? breakpoint.FileLine : null,
+                ComValue.NullIfEmpty(ComValue.Try(() => breakpoint.FunctionName)),
+                breakpoint.CurrentHits)
             : null;
 }

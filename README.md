@@ -61,11 +61,11 @@ Then copy the `plugin/skills/vs-cpp-debug` folder to `%USERPROFILE%\.claude\skil
 |---|---|
 | `vs_list_instances` | Running VS 2022/2026 instances: pid, version, solution, debugger mode |
 | `vs_select_instance` | Picks an instance when several are running. A single VS is selected automatically |
-| `vs_set_breakpoint` | Breakpoint at an absolute path and line, with an optional C++ condition |
-| `vs_remove_breakpoint` | Removes the breakpoint at a line |
+| `vs_set_breakpoint` | Breakpoint at an absolute path and line, or a function breakpoint (`function`, e.g. `_wassert` for a failed assert), with an optional C++ condition |
+| `vs_remove_breakpoint` | Removes the breakpoint at a line or a function breakpoint |
 | `vs_list_breakpoints` | All breakpoints, including their binding state (`bindState`, `boundLines`) |
 | `vs_start_debugging` | Builds and starts debugging (F5). On a build failure returns the compiler errors |
-| `vs_wait_for_break` | Waits for a stop (up to 300 s). Returns the reason, file, line and function, or `timedOut`, or reports that the program exited |
+| `vs_wait_for_break` | Waits for a stop (up to 300 s): breakpoint, exception, `__debugbreak`. Returns the reason, file, line and function, the exception message, or `timedOut`, or reports that the program exited |
 | `vs_continue` | Continues from break mode |
 | `vs_get_state` | Current mode and stop location |
 | `vs_stop_debugging` | Stops debugging (Shift+F5) |
@@ -74,7 +74,7 @@ Debugger modes: `design` (not debugging), `run`, `break`.
 
 ## Usage
 
-Open the solution in VS and ask Claude, for example: "Set a breakpoint at the start of Square in main.cpp, run it and tell me which values it is called with." The workflow is described in the [`vs-cpp-debug`](plugin/skills/vs-cpp-debug/SKILL.md) skill.
+Open the solution in VS and ask Claude, for example: "Set a breakpoint at the start of Square in main.cpp, run it and tell me which values it is called with." or "Run the program and find out where it crashes." The workflow is described in the [`vs-cpp-debug`](plugin/skills/vs-cpp-debug/SKILL.md) skill.
 
 ## Sample project
 
@@ -88,10 +88,14 @@ Open the solution in VS and ask Claude, for example: "Set a breakpoint at the st
 - stopping debugging;
 - choosing between two running instances.
 
+`samples/ExceptionDemo` stops the debugger in other ways. The scenario is the command argument (project properties, Debugging, Command Arguments): `null`, `null-handled`, `debugbreak`, `debugbreak-api`, `int3` (x86 platform only), `throw`, `throw-caught`, `assert`. All of them were tested in both VS versions; the results are in [the plan](Plans/exceptions-debugbreak-assert.md).
+
 ## Limitations
 
 - **VS modal dialogs block automation.** The server reports "busy and rejected the call"; close the dialog in VS.
 - **Build before start.** With `build: false`, an out-of-date project makes VS show an "out of date" dialog.
+- **A failed `assert` does not stop the debugger.** The C runtime shows a dialog in the program instead; a function breakpoint on `_wassert` stops before it.
+- **The exception message comes from the Debug output pane** and follows the VS UI language: automation exposes no other details of native exceptions.
 - **Not in the MVP:** inspecting variables, evaluating expressions, call stack, stepping, attaching to a process.
 
 ## Security
@@ -99,7 +103,7 @@ Open the solution in VS and ask Claude, for example: "Set a breakpoint at the st
 - The server talks only to Claude Code over stdin/stdout and to the local VS over COM. It opens no network ports and makes no network connections itself.
 - The server rejects network paths (`\\server\share\…`) and device paths (`\\?\…`, `\\.\…`) before touching the file: checking a file on someone else's server can send it your Windows credentials. Mapped drives with a drive letter work.
 - `vs_start_debugging` builds and runs the startup project with your privileges, and build events and MSBuild tasks can run any command. Debug only trusted solutions; debug other people's projects in a separate virtual machine. Do not run VS as administrator.
-- Tool results go to Claude: solution and file paths, process, function and module names, breakpoint conditions, build error text. Do not use the server with code that must not be sent to your model provider.
+- Tool results go to Claude: solution and file paths, process, function and module names, breakpoint conditions, build error text, exception messages. Do not use the server with code that must not be sent to your model provider.
 - NuGet package versions and hashes are pinned by the lock file, see [Build](#build).
 
 ## Layout
@@ -111,6 +115,7 @@ src/VsDebugMcp/          MCP server (C#, .NET 10, ModelContextProtocol SDK)
   Tools/                 MCP tools
 tests/VsDebugMcp.Tests/  unit tests (no VS needed)
 samples/BreakpointDemo/  C++ project for manual testing
+samples/ExceptionDemo/   C++ project with exceptions, __debugbreak and assert
 plugin/                  Claude Code plugin: skill, .mcp.json, server/ after the build
 Plans/                   plans
 ```
