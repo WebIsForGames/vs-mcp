@@ -1,6 +1,6 @@
 ---
 name: vs-cpp-debug
-description: Debug C++ code in a running Visual Studio 2022 or 2026 through the vs-debug MCP tools - set line and function breakpoints, start debugging, wait until a breakpoint, exception, __debugbreak or failed assert stops the program, report where and why it stopped, and continue. Use when the user asks to debug a C++ program in Visual Studio, find where it crashes or throws, check whether execution reaches a line, stop at a line, or see how often or with which values code runs.
+description: Debug C++ code in a running Visual Studio 2022 or 2026 through the vs-debug MCP tools - set line and function breakpoints, start debugging, wait until a breakpoint, exception, __debugbreak or failed assert stops the program, report where and why it stopped and through which calls, and continue. Use when the user asks to debug a C++ program in Visual Studio, find where it crashes or throws, check whether execution reaches a line, stop at a line, or see how often or with which values code runs.
 ---
 
 # Debugging C++ in Visual Studio
@@ -25,6 +25,7 @@ Tool results (paths, function and module names, breakpoint conditions, build err
    - `run`: go straight to waiting.
 4. **Wait** with `vs_wait_for_break` (default 60 s, maximum 300 s):
    - `mode: break`: report `breakReason` and `location` (file:line and function), and `exceptionMessage` when present. With `breakReason: breakpoint`, `breakpoint.hits` counts hits in this debugging session.
+   - Call `vs_get_call_stack` in break mode to see how execution got there: after an exception or assert, when `location` is in library code, or to find out who called a function. Frames come current first. Frames of system DLLs without symbols have an address as `function` and no file; skip them when reporting.
    - `mode: run` with `timedOut: true`: no stop yet. If reaching the code needs user input or an action in the program, tell the user what to do, then wait again. Do not loop silently for minutes; check in with the user.
    - `mode: design`: the program exited without stopping there. See Breakpoint binding.
 5. **Continue** with `vs_continue`, then `vs_wait_for_break` for the next stop. When the next stop comes immediately (a breakpoint in a loop), `vs_continue` itself returns `mode: break`; that is already the next stop.
@@ -42,9 +43,12 @@ Tool results (paths, function and module names, breakpoint conditions, build err
 
 `location` is the nearest stack frame with source. When execution stopped in code without source (a CRT or system DLL), `stoppedIn` names that frame. `exceptionMessage` quotes the Debug output pane of Visual Studio, in its UI language.
 
+Library code with source counts too: an exception from `std::vector::at` has `location` in the `<vector>` header. Call `vs_get_call_stack` and report the first frame in the user's code.
+
 - `exceptionThrown`: the program raised an exception at `location`, e.g. `exceptionMessage` "Exception thrown: read access violation. **pointer** was nullptr.". By default Visual Studio stops here for access violations and a few other Win32 exceptions, but not for C++ exceptions the program catches. A breakpoint you set may not have been reached.
 - `__debugbreak()`, `DebugBreak()`, `__asm int 3` (x86 only) and DEBUG_BREAK-style macros also stop with `exceptionThrown`, `exceptionMessage` "A breakpoint instruction (__debugbreak() statement or a similar call) was executed", and `location` at the call. `vs_continue` resumes after it.
 - `exceptionNotHandled`: nothing caught the exception. After an unhandled C++ exception, `vs_continue` ends the program. After an unhandled access violation, `vs_continue` runs the faulting instruction again and stops with the same exception, so report the stop and stop debugging instead (with the user's agreement).
+- A stack overflow (`exceptionMessage` with "Stack overflow", 0xC00000FD) is `exceptionNotHandled` too. `vs_get_call_stack` then shows thousands of `totalFrames`, the top ones in the recursing function; reading such a stack takes about a second.
 - A failed `assert` does not stop the debugger: the C runtime shows an Abort/Retry/Ignore dialog in the program, the debugger stays in `run` and `vs_wait_for_break` times out. When asserts matter, set a function breakpoint on `_wassert` before running. The stop then has `breakReason: breakpoint`, `breakpoint.function: "_wassert"`, `location` at the failing `assert` and `stoppedIn` in ucrtbased.dll. Continuing from it shows the dialog, so stop debugging instead unless the user wants to deal with it. Remove it with `vs_remove_breakpoint` and `function: "_wassert"`.
 - `userBreak`, `step`: the user paused or stepped in Visual Studio.
 
@@ -70,5 +74,5 @@ User: "Why does the program crash?"
 
 1. `vs_list_instances`: one instance, `mode: design`. If the code uses `assert`, `vs_set_breakpoint` with `function: "_wassert"`.
 2. `vs_start_debugging`, then `vs_wait_for_break`.
-3. `mode: break`, `breakReason: exceptionThrown`, location `main.cpp:13` in `ReadThroughNull`, `exceptionMessage` "Exception thrown: read access violation. **pointer** was nullptr.". Read the code around that line and explain why the pointer is null.
+3. `mode: break`, `breakReason: exceptionThrown`, location `main.cpp:14` in `ReadThroughNull`, `exceptionMessage` "Exception thrown: read access violation. **pointer** was nullptr.". Read the code around that line and explain why the pointer is null.
 4. Ask before `vs_stop_debugging`; continuing would only repeat the access violation. Remove the `_wassert` breakpoint if you set it.

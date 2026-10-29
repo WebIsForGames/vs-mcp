@@ -68,6 +68,7 @@ claude mcp add --scope user vs-debug -- O:\Personal\Projects\vs-mcp\plugin\serve
 | `vs_wait_for_break` | Ждёт остановку (до 300 с): breakpoint, исключение, `__debugbreak`. Возвращает причину, файл, строку, функцию, текст исключения, или `timedOut`, или сообщает, что программа завершилась |
 | `vs_continue` | Продолжение из режима break |
 | `vs_get_state` | Текущий режим и место остановки |
+| `vs_get_call_stack` | Стек вызовов текущего потока в режиме break: функция, файл, строка и модуль каждого кадра, до 100 кадров |
 | `vs_stop_debugging` | Остановка отладки (Shift+F5) |
 
 Режимы отладчика: `design` (отладка не идёт), `run`, `break`.
@@ -88,7 +89,7 @@ claude mcp add --scope user vs-debug -- O:\Personal\Projects\vs-mcp\plugin\serve
 - остановка отладки;
 - выбор между двумя запущенными экземплярами.
 
-`samples/ExceptionDemo` останавливает отладчик другими способами. Сценарий задаётся аргументом командной строки (свойства проекта, Debugging, Command Arguments): `null`, `null-handled`, `debugbreak`, `debugbreak-api`, `int3` (только платформа x86), `throw`, `throw-caught`, `assert`. Все они проверены в обеих версиях VS, результаты — в [плане](Plans/exceptions-debugbreak-assert.md).
+`samples/ExceptionDemo` останавливает отладчик другими способами. Сценарий задаётся аргументом командной строки (свойства проекта, Debugging, Command Arguments): `null`, `null-handled`, `debugbreak`, `debugbreak-api`, `int3` (только платформа x86), `throw`, `throw-caught`, `assert`, `out-of-range`, `stack-overflow`. Все они проверены в обеих версиях VS, результаты — в планах по [исключениям](Plans/exceptions-debugbreak-assert.md) и [стеку вызовов](Plans/call-stack.md).
 
 ## Ограничения
 
@@ -96,7 +97,7 @@ claude mcp add --scope user vs-debug -- O:\Personal\Projects\vs-mcp\plugin\serve
 - **Сборка перед запуском.** С `build: false` устаревший проект вызовет в VS диалог «out of date».
 - **Сработавший `assert` не останавливает отладчик.** Вместо этого C runtime показывает диалог в программе; function breakpoint на `_wassert` останавливает до него.
 - **Текст исключения берётся из панели Debug окна Output** и зависит от языка интерфейса VS: других сведений о native-исключениях автоматизация не даёт.
-- **Что не входит в MVP:** просмотр переменных, вычисление выражений, call stack, шаги, attach к процессу.
+- **Что не входит в MVP:** просмотр переменных, вычисление выражений, стек вызовов других потоков, шаги, attach к процессу.
 
 ## Безопасность
 

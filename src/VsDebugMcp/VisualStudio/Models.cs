@@ -27,6 +27,10 @@ public sealed record SourceLocation(string? File, int? Line, string? Function, s
 
 public sealed record BreakpointHit(string? File, int? Line, string? Function, int Hits);
 
+/// <param name="TotalFrames">Frames on the stack; more than <paramref name="Frames"/> when the list was cut short.</param>
+/// <param name="Frames">The current frame first, then its callers.</param>
+public sealed record CallStack(int TotalFrames, List<SourceLocation> Frames);
+
 /// <param name="Mode">"design" (not debugging), "run" or "break".</param>
 /// <param name="BreakReason">Why the debugger stopped, e.g. "breakpoint", "exceptionThrown", "step"; break mode only.</param>
 /// <param name="Location">

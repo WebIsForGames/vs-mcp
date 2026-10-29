@@ -9,6 +9,8 @@ public sealed class DebuggerService(VsSession session)
 {
     public const int DefaultWaitSeconds = 60;
     public const int MaxWaitSeconds = 300;
+    public const int DefaultStackFrames = 20;
+    public const int MaxStackFrames = 100;
 
     private const int MaxReportedBuildErrors = 10;
     private static readonly TimeSpan WaitPollInterval = TimeSpan.FromMilliseconds(200);
@@ -21,6 +23,8 @@ public sealed class DebuggerService(VsSession session)
     private static readonly TimeSpan ExceptionMessageTimeout = TimeSpan.FromSeconds(1);
 
     public static TimeSpan ClampWaitTimeout(int seconds) => TimeSpan.FromSeconds(Math.Clamp(seconds, 1, MaxWaitSeconds));
+
+    public static int ClampStackFrames(int frames) => Math.Clamp(frames, 1, MaxStackFrames);
 
     public Task<BreakpointInfo> SetBreakpointAsync(string? file, int? line, string? function, string? condition)
     {
@@ -138,14 +142,7 @@ public sealed class DebuggerService(VsSession session)
         var (before, transitionsBefore) = await session.InvokeAsync(instance, vs =>
         {
             var debugger = vs.Dte.Debugger;
-            var mode = debugger.CurrentMode;
-            if (mode != dbgDebugMode.dbgBreakMode)
-            {
-                throw new McpException(
-                    $"vs_continue works only in break mode, but the debugger is in {DebuggerText.Mode(mode)} mode." +
-                    (mode == dbgDebugMode.dbgDesignMode ? " Use vs_start_debugging." : " Use vs_wait_for_break."));
-            }
-
+            RequireBreakMode(debugger, "vs_continue");
             var transitions = vs.Monitor.Transitions;
             var state = DebuggerSnapshot.Capture(debugger);
             vs.Monitor.MarkOutput();
@@ -189,6 +186,13 @@ public sealed class DebuggerService(VsSession session)
         var state = await session.InvokeAsync(instance, vs => DebuggerSnapshot.Capture(vs.Dte.Debugger));
         return await WithExceptionMessageAsync(instance, state, cancellationToken);
     }
+
+    public Task<CallStack> GetCallStackAsync(int maxFrames) => session.RunAsync(vs =>
+    {
+        var debugger = vs.Dte.Debugger;
+        RequireBreakMode(debugger, "vs_get_call_stack");
+        return DebuggerSnapshot.CaptureCallStack(debugger, ClampStackFrames(maxFrames));
+    });
 
     public async Task<DebuggerState> StopAsync(CancellationToken cancellationToken)
     {
@@ -277,6 +281,17 @@ public sealed class DebuggerService(VsSession session)
             TransitionPollInterval,
             cancellationToken);
         return state with { ExceptionMessage = message };
+    }
+
+    private static void RequireBreakMode(Debugger debugger, string tool)
+    {
+        var mode = debugger.CurrentMode;
+        if (mode != dbgDebugMode.dbgBreakMode)
+        {
+            throw new McpException(
+                $"{tool} works only in break mode, but the debugger is in {DebuggerText.Mode(mode)} mode." +
+                (mode == dbgDebugMode.dbgDesignMode ? " Use vs_start_debugging." : " Use vs_wait_for_break."));
+        }
     }
 
     private static IEnumerable<Breakpoint> Items(Breakpoints breakpoints)

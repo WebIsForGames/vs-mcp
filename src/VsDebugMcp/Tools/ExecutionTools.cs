@@ -39,6 +39,14 @@ public sealed class ExecutionTools(DebuggerService debugger)
     [Description("Returns the current debugger mode (design, run, break) and, in break mode, the reason and source location.")]
     public Task<DebuggerState> GetState(CancellationToken cancellationToken = default) => debugger.GetStateAsync(cancellationToken);
 
+    [McpServerTool(Name = "vs_get_call_stack", ReadOnly = true)]
+    [Description(
+        "Returns the call stack of the current thread in break mode: function, file, line and module of each frame, " +
+        "the current frame first, then its callers. totalFrames larger than the number of frames returned means the list was cut at maxFrames.")]
+    public Task<CallStack> GetCallStack(
+        [Description("Frames to return, 1-100. Default 20.")] int maxFrames = DebuggerService.DefaultStackFrames) =>
+        debugger.GetCallStackAsync(maxFrames);
+
     [McpServerTool(Name = "vs_stop_debugging", Destructive = true)]
     [Description("Stops debugging (like Shift+F5); a launched program is terminated.")]
     public Task<DebuggerState> StopDebugging(CancellationToken cancellationToken = default) =>

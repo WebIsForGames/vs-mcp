@@ -20,7 +20,7 @@ public static class DebuggerSnapshot
 
         var reason = debugger.LastBreakReason;
         var current = ComValue.Try(() => Location(debugger.CurrentStackFrame));
-        var location = ComValue.Try(() => SourceFrame(current, Stack(debugger))) ?? current;
+        var location = ComValue.Try(() => SourceFrame(current, Stack(() => debugger.CurrentThread.StackFrames, MaxSourceFrameDepth))) ?? current;
         return new DebuggerState(
             DebuggerText.Break,
             DebuggerText.Reason(reason),
@@ -37,10 +37,19 @@ public static class DebuggerSnapshot
     public static SourceLocation? SourceFrame(SourceLocation? current, IEnumerable<SourceLocation> stack) =>
         current?.File is not null ? current : stack.FirstOrDefault(frame => frame.File is not null) ?? current;
 
-    private static IEnumerable<SourceLocation> Stack(Debugger debugger)
+    /// <summary>The first <paramref name="maxFrames"/> frames of the current thread. Call only on the STA thread in break mode.</summary>
+    public static CallStack CaptureCallStack(Debugger debugger, int maxFrames)
     {
+        // Each StackFrames collection walks the whole stack on its first Count (0.7 s for 3800 frames), so only one is read.
         var frames = debugger.CurrentThread.StackFrames;
-        for (var i = 1; i <= Math.Min(frames.Count, MaxSourceFrameDepth); i++)
+        return new CallStack(frames.Count, [.. Stack(() => frames, maxFrames)]);
+    }
+
+    // Reads the frames only when enumerated: Capture needs none when the current frame has source.
+    private static IEnumerable<SourceLocation> Stack(Func<StackFrames> read, int maxFrames)
+    {
+        var frames = read();
+        for (var i = 1; i <= Math.Min(frames.Count, maxFrames); i++)
         {
             if (Location(frames.Item(i)) is { } frame)
             {

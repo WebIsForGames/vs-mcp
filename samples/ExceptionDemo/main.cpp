@@ -4,6 +4,7 @@
 #include <cstdio>
 #include <cstring>
 #include <stdexcept>
+#include <vector>
 
 // Each scenario stops the debugger in its own way. Pass the scenario name as the command argument.
 
@@ -28,6 +29,18 @@ static int ReadThroughNullHandled()
 static void Throw()
 {
     throw std::runtime_error("demo failure");
+}
+
+static int ReadPastEnd()
+{
+    std::vector<int> values(3);
+    return values.at(3);
+}
+
+// Recurses until the stack overflows: depth never becomes negative.
+static int Recurse(int depth)
+{
+    return depth < 0 ? 0 : Recurse(depth + 1) + 1;
 }
 
 int main(int argc, char** argv)
@@ -80,9 +93,17 @@ int main(int argc, char** argv)
     {
         assert(false);
     }
+    else if (strcmp(scenario, "out-of-range") == 0)
+    {
+        std::printf("%d\n", ReadPastEnd());
+    }
+    else if (strcmp(scenario, "stack-overflow") == 0)
+    {
+        std::printf("%d\n", Recurse(1));
+    }
     else
     {
-        std::printf("Usage: ExceptionDemo null|null-handled|debugbreak|debugbreak-api|int3|throw|throw-caught|assert\n");
+        std::printf("Usage: ExceptionDemo null|null-handled|debugbreak|debugbreak-api|int3|throw|throw-caught|assert|out-of-range|stack-overflow\n");
         return 1;
     }
 

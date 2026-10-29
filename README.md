@@ -68,6 +68,7 @@ Then copy the `plugin/skills/vs-cpp-debug` folder to `%USERPROFILE%\.claude\skil
 | `vs_wait_for_break` | Waits for a stop (up to 300 s): breakpoint, exception, `__debugbreak`. Returns the reason, file, line and function, the exception message, or `timedOut`, or reports that the program exited |
 | `vs_continue` | Continues from break mode |
 | `vs_get_state` | Current mode and stop location |
+| `vs_get_call_stack` | Call stack of the current thread in break mode: function, file, line and module of each frame, up to 100 frames |
 | `vs_stop_debugging` | Stops debugging (Shift+F5) |
 
 Debugger modes: `design` (not debugging), `run`, `break`.
@@ -88,7 +89,7 @@ Open the solution in VS and ask Claude, for example: "Set a breakpoint at the st
 - stopping debugging;
 - choosing between two running instances.
 
-`samples/ExceptionDemo` stops the debugger in other ways. The scenario is the command argument (project properties, Debugging, Command Arguments): `null`, `null-handled`, `debugbreak`, `debugbreak-api`, `int3` (x86 platform only), `throw`, `throw-caught`, `assert`. All of them were tested in both VS versions; the results are in [the plan](Plans/exceptions-debugbreak-assert.md).
+`samples/ExceptionDemo` stops the debugger in other ways. The scenario is the command argument (project properties, Debugging, Command Arguments): `null`, `null-handled`, `debugbreak`, `debugbreak-api`, `int3` (x86 platform only), `throw`, `throw-caught`, `assert`, `out-of-range`, `stack-overflow`. All of them were tested in both VS versions; the results are in the plans for [exceptions](Plans/exceptions-debugbreak-assert.md) and [the call stack](Plans/call-stack.md).
 
 ## Limitations
 
@@ -96,7 +97,7 @@ Open the solution in VS and ask Claude, for example: "Set a breakpoint at the st
 - **Build before start.** With `build: false`, an out-of-date project makes VS show an "out of date" dialog.
 - **A failed `assert` does not stop the debugger.** The C runtime shows a dialog in the program instead; a function breakpoint on `_wassert` stops before it.
 - **The exception message comes from the Debug output pane** and follows the VS UI language: automation exposes no other details of native exceptions.
-- **Not in the MVP:** inspecting variables, evaluating expressions, call stack, stepping, attaching to a process.
+- **Not in the MVP:** inspecting variables, evaluating expressions, call stacks of other threads, stepping, attaching to a process.
 
 ## Security
 
