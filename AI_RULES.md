@@ -29,3 +29,8 @@ These rules are mandatory for every AI agent working in this repository.
 - Diagnose and fix the underlying compatibility, dependency, API, or implementation problem.
 - If preserving functionality requires a product or architecture decision, stop and ask the user before changing behavior.
 - Report any remaining build failure honestly rather than presenting reduced functionality as a fix.
+
+## Push and Upload Only on Request
+
+- Never push or upload without a direct user request.
+- This covers `git push`, pull requests, releases, packages, and uploads to any remote service. A request covers only the push or upload it names.
